@@ -1,0 +1,268 @@
+name: linux ntfs test CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: install package for kernel build
+      run: |
+        sudo lsb_release -a
+        sudo uname -r
+        sudo apt-get update
+        sudo apt-get install libelf-dev wget tar gzip
+        sudo apt-get remove libntfs-3g89 ntfs-3g
+        #    - name: download kernel
+        #      run: wget --no-check-certificate https://mirrors.edge.kernel.org/pub/linux/kernel/v5.x/linux-5.4.109.tar.gz
+        #    - name: decompress kernel source
+        #      run: tar xf linux-5.4.109.tar.gz
+        #    - name: ntfs build test on linux 5.4 kernel
+        #      run: |
+        #        rm -rf linux-5.4.109/fs/ntfs/*
+        #        mv linux-5.4.109 ../
+        #        cp -ar * ../linux-5.4.109/fs/ntfs/
+        #        cd ../linux-5.4.109/
+        #        yes "" | make oldconfig > /dev/null
+        #        echo 'CONFIG_NTFS_FS=m' >> .config
+        #        make -j$((`nproc`+1)) fs/ntfs/ntfs.ko
+        #        cd ../linux-ntfs
+    - name: Prerequisite for xfstests testing
+      run: |
+        sudo apt-get install linux-headers-$(uname -r)
+        sudo apt-get install autoconf libtool pkg-config libnl-3-dev libnl-genl-3-dev
+        sudo apt-get install xfslibs-dev uuid-dev libtool-bin xfsprogs libgdbm-dev gawk fio attr libattr1-dev libacl1-dev libaio-dev
+        sudo apt-get install libgcrypt20-dev
+        git clone https://github.com/namjaejeon/exfat-testsuites
+        export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+        export PATH=/usr/local/lib:$PATH
+        sudo useradd fsgqa
+        sudo useradd 123456-fsgqa
+    - name: Run xfstests testsuite
+      run: |
+        uname -r
+        make > /dev/null
+        sudo make install > /dev/null
+        sudo insmod ntfs.ko
+        tar xzvf ntfsprogs.tgz
+        cd ntfsprogs
+        ./autogen.sh > /dev/null
+        ./configure > /dev/null
+        make -j$((`nproc`+1)) > /dev/null
+        sudo make install > /dev/null
+        cd ..
+        rm ntfsprogs.tgz
+        rm -rf ntfsprogs
+        sudo mkdir -p /mnt/scratch
+        sudo mkdir -p /mnt/test
+        sudo mkdir -p full_test
+    - name: create file/director test
+      run: |
+        truncate -s 10G full_test.img
+        sudo losetup /dev/loop22 full_test.img
+        sudo mkfs.ntfs /dev/loop22
+        sudo mount -t ntfs /dev/loop22 ./full_test/
+        cd full_test/
+        i=1;while [ $i -le 10000 ];do sudo touch file$i;if [ $? != 0 ]; then exit 1; fi; i=$(($i + 1));done
+        sync
+        cd ..
+        sudo umount ./full_test/
+        sudo mount -t ntfs /dev/loop22 ./full_test/
+        cd full_test
+        sudo rm -rf *
+        i=1;while [ $i -le 10000 ];do sudo mkdir file$i;if [ $? != 0 ]; then exit 1; fi; i=$(($i + 1));done
+        sync
+        sudo rm -rf *
+        cd ..
+        sudo umount ./full_test/
+        sudo ntfsck -n /dev/loop22
+        rm full_test.img
+    - name: xfstest tests 4K cluster size
+      if: always()
+      run: |
+        truncate -s 100G test.img
+        truncate -s 100G scratch.img
+        sudo losetup /dev/loop20 test.img
+        sudo losetup /dev/loop21 scratch.img
+        sudo mkfs.ntfs /dev/loop20
+        sudo mkfs.ntfs /dev/loop21
+        cd exfat-testsuites/
+        tar xzvf xfstests-exfat.tgz > /dev/null
+        rm xfstests-exfat.tgz
+        cd xfstests-exfat
+        cp local.config.ntfs local.config
+        make -j$((`nproc`+1)) > /dev/null
+        echo 'FSTYP=ntfs' >> local.config
+        sudo ./check generic/001
+        sudo ./check generic/002
+        sudo ./check generic/005
+        sudo ./check generic/006
+        sudo ./check generic/007
+        sudo ./check generic/011
+        sudo ./check generic/013
+        sudo ./check generic/014
+        sudo ./check generic/020
+        sudo ./check generic/023
+        sudo ./check generic/024
+        sudo ./check generic/028
+        sudo ./check generic/029
+        sudo ./check generic/030
+        sudo ./check generic/035
+        sudo ./check generic/036
+        sudo ./check generic/037
+        sudo ./check generic/067
+        sudo ./check generic/069
+        sudo ./check generic/070
+        sudo ./check generic/074
+        sudo ./check generic/075
+        sudo ./check generic/076
+        sudo ./check generic/080
+        sudo ./check generic/084
+        sudo ./check generic/087
+        sudo ./check generic/088
+        sudo ./check generic/089
+        sudo ./check generic/091
+        sudo ./check generic/095
+        sudo ./check generic/097
+        sudo ./check generic/098
+        sudo ./check generic/100
+        sudo ./check generic/108
+        sudo ./check generic/109
+        sudo ./check generic/112
+        sudo ./check generic/113
+        sudo ./check generic/114
+        sudo ./check generic/117
+        sudo ./check generic/120
+        sudo ./check generic/123
+        sudo ./check generic/124
+        sudo ./check generic/126
+        sudo ./check generic/127
+        sudo ./check generic/129
+        sudo ./check generic/130
+        sudo ./check generic/131
+        sudo ./check generic/132
+        sudo ./check generic/133
+        sudo ./check generic/135
+        sudo ./check generic/141
+        sudo ./check generic/169
+        sudo ./check generic/184
+        sudo ./check generic/192
+        sudo ./check generic/193
+        sudo ./check generic/198
+        sudo ./check generic/207
+        rm -rf /mnt/test/*
+        rm -rf /mnt/scratch/*
+        sudo ./check generic/208
+        sudo ./check generic/209
+        sudo ./check generic/210
+        sudo ./check generic/211
+        sudo ./check generic/212
+        sudo ./check generic/215
+        sudo ./check generic/221
+        sudo ./check generic/236
+        sudo ./check generic/239
+        sudo ./check generic/240
+        sudo ./check generic/241
+        sudo ./check generic/245
+        sudo ./check generic/246
+        sudo ./check generic/247
+        sudo ./check generic/248
+        sudo ./check generic/249
+        sudo ./check generic/257
+        sudo ./check generic/263
+        sudo ./check generic/285
+        sudo ./check generic/294
+        sudo ./check generic/306
+        sudo ./check generic/308
+        sudo ./check generic/309
+        sudo ./check generic/310
+        sudo ./check generic/313
+        sudo ./check generic/314
+        sudo ./check generic/317
+        sudo ./check generic/323
+        sudo ./check generic/325
+        sudo ./check generic/337
+        sudo ./check generic/338
+        sudo ./check generic/339
+        sudo ./check generic/340
+        sudo ./check generic/344
+        sudo ./check generic/345
+        sudo ./check generic/346
+        sudo ./check generic/354
+        sudo ./check generic/355
+        sudo ./check generic/378
+        sudo ./check generic/393
+        sudo ./check generic/394
+        sudo ./check generic/403
+        sudo ./check generic/405
+        sudo ./check generic/406
+        sudo ./check generic/409
+        sudo ./check generic/410
+        sudo ./check generic/411
+        sudo ./check generic/412
+        sudo ./check generic/418
+        sudo ./check generic/423
+        sudo ./check generic/426
+        sudo ./check generic/428
+        sudo ./check generic/430
+        sudo ./check generic/431
+        sudo ./check generic/432
+        sudo ./check generic/433
+        sudo ./check generic/434
+        sudo ./check generic/437
+        sudo ./check generic/438
+        sudo ./check generic/441
+        sudo ./check generic/443
+        sudo ./check generic/448
+        sudo ./check generic/450
+        sudo ./check generic/451
+        sudo ./check generic/452
+        sudo ./check generic/460
+        sudo ./check generic/464
+        sudo ./check generic/465
+        sudo ./check generic/467
+        sudo ./check generic/477
+        sudo ./check generic/478
+        sudo ./check generic/479
+        sudo ./check generic/480
+        sudo ./check generic/481
+        sudo ./check generic/484
+        sudo ./check generic/486
+        sudo ./check generic/490
+        sudo ./check generic/504
+        sudo ./check generic/519
+        sudo ./check generic/523
+        sudo ./check generic/524
+        sudo ./check generic/528
+        sudo ./check generic/531
+        sudo ./check generic/532
+        sudo ./check generic/533
+        sudo ./check generic/535
+        sudo ./check generic/538
+        sudo ./check generic/551
+        sudo ./check generic/557
+        sudo ./check generic/564
+        sudo ./check generic/571
+        sudo ./check generic/591
+        sudo ./check generic/598
+        sudo ./check generic/604
+        sudo ./check generic/609
+        sudo ./check generic/611
+        sudo ./check generic/650
+        sudo ./check generic/040
+        sudo ./check generic/041
+        sudo ./check generic/061
+        sudo ./check generic/062
+        sudo ./check generic/311
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+              name: xfs_results
+              path: /home/runner/work/linux-ntfs/linux-ntfs/exfat-testsuites/xfstests-exfat/results/generic/
