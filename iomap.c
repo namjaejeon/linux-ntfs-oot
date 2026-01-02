@@ -86,13 +86,8 @@ const struct iomap_folio_ops ntfs_iomap_folio_ops = {
 };
 #endif
 #else
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
-void ntfs_zero_range_page_done(struct inode *inode, loff_t pos, unsigned int len,
-			       struct page *page, struct iomap *iomap)
-#else
 void ntfs_zero_range_page_done(struct inode *inode, loff_t pos, unsigned int len,
 			       struct page *page)
-#endif
 {
 	struct ntfs_inode *ni = NTFS_I(inode);
 	unsigned long sector_size = 1UL << inode->i_blkbits;
@@ -198,7 +193,7 @@ const struct iomap_folio_ops ntfs_zero_iomap_folio_ops = {
 };
 #else
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-const struct iomap_folio_ops ntfs_zero_iomap_folio_ops = {
+const struct iomap_page_ops ntfs_zero_iomap_page_ops = {
 	.page_done = ntfs_zero_range_page_done,
 	.iomap_valid = ntfs_iomap_valid,
 };
@@ -352,7 +347,7 @@ static int ntfs_read_iomap_begin_non_resident(struct inode *inode, loff_t offset
 	}
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 		if (flags & IOMAP_ZERO) {
 			if (for_clu_zero)
 				iomap->folio_ops = &ntfs_zero_iomap_folio_ops;
@@ -360,8 +355,12 @@ static int ntfs_read_iomap_begin_non_resident(struct inode *inode, loff_t offset
 				iomap->folio_ops = &ntfs_iomap_folio_ops;
 		}
 #else
-		if (flags & IOMAP_ZERO)
-			iomap->page_ops = &ntfs_zero_range_page_ops;
+		if (flags & IOMAP_ZERO) {
+			if (for_clu_zero)
+				iomap->page_ops = &ntfs_zero_iomap_page_ops;
+			else
+				iomap->page_ops = &ntfs_zero_range_page_ops;
+		}
 #endif
 #endif
 	iomap->flags |= IOMAP_F_MERGED;

@@ -1555,8 +1555,13 @@ int ntfs_compress_write(struct ntfs_inode *ni, loff_t pos, size_t count,
 			size_t cp, tail = PAGE_SIZE - off;
 
 			page = pages[ip];
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 			cp = copy_folio_from_iter_atomic(page_folio(page), off,
 					min(tail, bytes), from);
+#else
+			cp = copy_page_from_iter_atomic(page, off,
+					min(tail, bytes), from);
+#endif
 			flush_dcache_page(page);
 
 			copied += cp;

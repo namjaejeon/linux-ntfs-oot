@@ -462,8 +462,10 @@ static void ntfs_destroy_extent_inode(struct ntfs_inode *ni)
 	if (ni->folio)
 		folio_put(ni->folio);
 #else
-	if (ni->page)
-		ntfs_unmap_page(ni->page);
+	if (ni->page) {
+		kunmap(ni->page);
+		put_page(ni->page);
+	}
 #endif
 	kfree(ni->mrec);
 	kmem_cache_free(ntfs_inode_cache, ni);
@@ -2413,8 +2415,10 @@ release:
 	if (ni->folio)
 		folio_put(ni->folio);
 #else
-	if (ni->page)
-		ntfs_unmap_page(ni->page);
+	if (ni->page) {
+		kunmap(ni->page);
+		put_page(ni->page);
+	}
 #endif
 	kfree(ni->mrec);
 	ntfs_free(ni->target);
@@ -3653,7 +3657,7 @@ s64 ntfs_inode_attr_pread(struct inode *vi, s64 pos, s64 count, u8 *buf)
 #else
 	do {
 		/* Update @index and get the next page. */
-		page = ntfs_map_page(mapping, index);
+		page = read_mapping_page(mapping, index, NULL);
 		if (IS_ERR(page))
 			break;
 		addr = page_address(page);
@@ -3668,7 +3672,8 @@ s64 ntfs_inode_attr_pread(struct inode *vi, s64 pos, s64 count, u8 *buf)
 		pos += attr_len;
 		count -= attr_len;
 		unlock_page(page);
-		ntfs_unmap_page(page);
+		kunmap(page);
+		put_page(page);
 		index++;
 	} while (count);
 #endif
@@ -3957,7 +3962,7 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 
 	index = pos >> PAGE_SHIFT;
 	while (count) {
-		page = ntfs_map_page(mapping, index);
+		page = read_mapping_page(mapping, index, NULL);
 		if (IS_ERR(page)) {
 			ret = PTR_ERR(page);
 			ntfs_error(vi->i_sb, "Failed to read a page %lu for attr %#x: %ld",
@@ -3981,7 +3986,8 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 		if (sync)
 			wait_for_stable_page(page);
 		unlock_page(page);
-		ntfs_unmap_page(page);
+		kunmap(page);
+		put_page(page);
 		cond_resched();
 		index++;
 	}

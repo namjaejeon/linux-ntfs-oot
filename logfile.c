@@ -387,7 +387,7 @@ static int ntfs_check_and_load_restart_page(struct inode *vi,
 			memcpy((u8 *)trp + have_read, folio_address(folio), size);
 			folio_put(folio);
 #else
-			page = ntfs_map_page(vi->i_mapping, idx);
+			page = read_mapping_page(vi->i_mapping, idx, NULL);
 			if (IS_ERR(page)) {
 				ntfs_error(vi->i_sb, "Error mapping LogFile page (index %lu).",
 						idx);
@@ -398,7 +398,8 @@ static int ntfs_check_and_load_restart_page(struct inode *vi,
 			}
 			size = min_t(int, to_read, PAGE_SIZE);
 			memcpy((u8 *)trp + have_read, page_address(page), size);
-			ntfs_unmap_page(page);
+			kunmap(page);
+			put_page(page);
 #endif
 			have_read += size;
 			to_read -= size;
@@ -552,9 +553,11 @@ bool ntfs_check_logfile(struct inode *log_vi, struct restart_page_header **rp)
 		pgoff_t idx = pos >> PAGE_SHIFT;
 
 		if (!page || page->index != idx) {
-			if (page)
-				ntfs_unmap_page(page);
-			page = ntfs_map_page(mapping, idx);
+			if (page) {
+				kunmap(page);
+				put_page(page);
+			}
+			page = read_mapping_page(mapping, idx, NULL);
 			if (IS_ERR(page)) {
 				ntfs_error(vol->sb, "Error mapping LogFile page (index %lu).",
 						idx);

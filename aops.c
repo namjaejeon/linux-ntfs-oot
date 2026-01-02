@@ -18,8 +18,13 @@
 #include "debug.h"
 #include "iomap.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 static s64 ntfs_convert_folio_index_into_lcn(struct ntfs_volume *vol, struct ntfs_inode *ni,
 		unsigned long folio_index)
+#else
+static s64 ntfs_convert_page_index_into_lcn(struct ntfs_volume *vol, struct ntfs_inode *ni,
+		unsigned long folio_index)
+#endif
 {
 	s64 vcn;
 	s64 lcn;
@@ -129,6 +134,7 @@ static int ntfs_readpage(struct file *file, struct page *page)
 			BUG_ON(ni->name_len);
 			return ntfs_read_compressed_block(page);
 		}
+	}
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
@@ -141,7 +147,7 @@ static int ntfs_readpage(struct file *file, struct page *page)
 	return iomap_readpage(page, &ntfs_read_iomap_ops);
 #endif
 #endif
-	}
+}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 static int ntfs_write_mft_block(struct ntfs_inode *ni, struct folio *folio,

@@ -67,12 +67,22 @@ int write_mft_record_nolock(struct ntfs_inode *ni, struct mft_record *m, int syn
  */
 static inline int write_mft_record(struct ntfs_inode *ni, struct mft_record *m, int sync)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	struct folio *folio = ni->folio;
 	int err;
 
 	folio_lock(folio);
 	err = write_mft_record_nolock(ni, m, sync);
 	folio_unlock(folio);
+#else
+	struct page *page = ni->page;
+	int err;
+
+	BUG_ON(!page);
+	lock_page(page);
+	err = write_mft_record_nolock(ni, m, sync);
+	unlock_page(page);
+#endif
 
 	return err;
 }

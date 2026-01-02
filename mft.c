@@ -179,7 +179,8 @@ err_out:
 	if (!IS_ERR(page)) {
 		ni->mrec = kmalloc(vol->mft_record_size, GFP_NOFS);
 		if (!ni->mrec) {
-			ntfs_unmap_page(page);
+			kunmap(page);
+			put_page(page);
 			page = ERR_PTR(-ENOMEM);
 			goto err_out;
 		}
@@ -193,7 +194,9 @@ err_out:
 			ni->page_ofs = ofs;
 			return ni->mrec;
 		}
-		ntfs_unmap_page(page);
+		kunmap(page);
+		put_page(page);
+
 		kfree(ni->mrec);
 		ni->mrec = NULL;
 		page = ERR_PTR(-EIO);
@@ -596,9 +599,16 @@ int ntfs_sync_mft_mirror(struct ntfs_volume *vol, const unsigned long mft_no,
 	bio_set_dev(bio, vol->sb->s_bdev);
 	bio->bi_opf = REQ_OP_WRITE;
 #endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	bio->bi_iter.bi_sector =
 		NTFS_B_TO_SECTOR(vol, NTFS_CLU_TO_B(vol, vol->mftmirr_lcn) +
 				 lcn_folio_off + folio_ofs);
+#else
+	bio->bi_iter.bi_sector =
+		NTFS_B_TO_SECTOR(vol, NTFS_CLU_TO_B(vol, vol->mftmirr_lcn) +
+				 lcn_page_off + page_ofs);
+#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 	if (!bio_add_folio(bio, folio, vol->mft_record_size, folio_ofs)) {
@@ -1214,7 +1224,7 @@ static int ntfs_mft_bitmap_find_and_alloc_free_rec_nolock(struct ntfs_volume *vo
 			folio_lock(folio);
 			buf = (u8 *)kmap_local_folio(folio, 0) + folio_ofs;
 #else
-			page = read_mapping_page(mapping, ofs >> PAGE_SHIFT, NULL);
+			page = read_mapping_page(mftbmp_mapping, ofs >> PAGE_SHIFT, NULL);
 			if (IS_ERR(page)) {
 				ntfs_error(vol->sb, "Failed to read mft bitmap, aborting.");
 				return PTR_ERR(page);
@@ -2272,7 +2282,8 @@ static int ntfs_mft_record_format(const struct ntfs_volume *vol, const s64 mft_n
 #else
 		SetPageUptodate(page);
 		unlock_page(page);
-		ntfs_unmap_page(page);
+		kunmap(page);
+		put_page(page);
 #endif
 		return err;
 	}

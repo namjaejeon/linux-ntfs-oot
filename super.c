@@ -1315,20 +1315,22 @@ static bool check_mft_mirror(struct ntfs_volume *vol)
 		/* Switch pages if necessary. */
 		if (!(i % mrecs_per_page)) {
 			if (index) {
-				ntfs_unmap_page(mft_page);
-				ntfs_unmap_page(mirr_page);
+				kunmap(mft_page);
+				put_page(mft_page);
+				kunmap(mirr_page);
+				put_page(mirr_page);
 			}
 			/* Get the $MFT page. */
-			mft_page = ntfs_map_page(vol->mft_ino->i_mapping,
-					index);
+			mft_page = read_mapping_page(vol->mft_ino->i_mapping,
+					index, NULL);
 			if (IS_ERR(mft_page)) {
 				ntfs_error(sb, "Failed to read $MFT.");
 				return false;
 			}
 			kmft = page_address(mft_page);
 			/* Get the $MFTMirr page. */
-			mirr_page = ntfs_map_page(vol->mftmirr_ino->i_mapping,
-					index);
+			mirr_page = read_mapping_page(vol->mftmirr_ino->i_mapping,
+					index, NULL);
 			if (IS_ERR(mirr_page)) {
 				ntfs_error(sb, "Failed to read $MFTMirr.");
 				goto mft_unmap_out;
@@ -1547,7 +1549,7 @@ static int check_windows_hibernation_status(struct ntfs_volume *vol)
 	}
 	start_addr = (u32 *)kmap_local_folio(folio, 0);
 #else
-	page = ntfs_map_page(vi->i_mapping, 0);
+	page = read_mapping_page(vi->i_mapping, 0, NULL);
 	if (IS_ERR(page)) {
 		ntfs_error(vol->sb, "Failed to read from hiberfil.sys.");
 		ret = PTR_ERR(page);
@@ -2315,7 +2317,7 @@ static void ntfs_put_super(struct super_block *sb)
 	ntfs_volume_free(vol);
 }
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 16, 0)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(6, 5, 0)
 int ntfs_force_shutdown(struct super_block *sb, u32 flags)
 {
 	struct ntfs_volume *vol = NTFS_SB(sb);
@@ -2778,7 +2780,7 @@ static const struct super_operations ntfs_sops = {
 	.drop_inode	= ntfs_drop_big_inode,
 	.write_inode	= ntfs_write_inode,	/* VFS: Write dirty inode to disk. */
 	.put_super	= ntfs_put_super,	/* Syscall: umount. */
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 16, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0)
 	.shutdown	= ntfs_shutdown,
 #endif
 	.sync_fs	= ntfs_sync_fs,		/* Syscall: sync. */
