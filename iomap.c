@@ -786,7 +786,7 @@ static int ntfs_write_iomap_begin_resident(struct inode *inode, loff_t offset,
 out:
 	if (ctx)
 		ntfs_attr_put_search_ctx(ctx);
-
+	mutex_unlock(&ni->mrec_lock);
 	return err;
 }
 
@@ -810,8 +810,6 @@ static int __ntfs_write_iomap_begin(struct inode *inode, loff_t offset,
 					length, iomap);
 	} else
 		ret = ntfs_write_iomap_begin_resident(inode, offset, iomap);
-	mutex_unlock(&ni->mrec_lock);
-
 	return ret;
 }
 
