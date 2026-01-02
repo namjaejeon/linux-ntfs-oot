@@ -15,11 +15,8 @@
 #include <linux/fs_context.h>
 #include <linux/fs_parser.h>
 #include <linux/version.h>
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
 #include <linux/fs_context.h>
 #include <linux/fs_parser.h>
-#endif
 
 #include "sysctl.h"
 #include "logfile.h"
@@ -45,7 +42,6 @@ enum {
 	ON_ERRORS_CONTINUE = 0x04,
 };
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
 static const struct constant_table ntfs_param_enums[] = {
 	{ "panic",		ON_ERRORS_PANIC },
 	{ "remount-ro",		ON_ERRORS_REMOUNT_RO },
@@ -297,280 +293,6 @@ static int ntfs_reconfigure(struct fs_context *fc)
 	ntfs_debug("Done.");
 	return 0;
 }
-#else
-/**
- * simple_getbool -
- *
- * Copied from old ntfs driver (which copied from vfat driver).
- */
-static int simple_getbool(char *s, bool *setval)
-{
-	if (s) {
-		if (!strcmp(s, "1") || !strcmp(s, "yes") || !strcmp(s, "true"))
-			*setval = true;
-		else if (!strcmp(s, "0") || !strcmp(s, "no") ||
-							!strcmp(s, "false"))
-			*setval = false;
-		else
-			return 0;
-	} else
-		*setval = true;
-	return 1;
-}
-
-/**
- * parse_options - parse the (re)mount options
- * @vol:	ntfs volume
- * @opt:	string containing the (re)mount options
- *
- * Parse the recognized options in @opt for the ntfs volume described by @vol.
- */
-static bool parse_options(struct ntfs_volume *vol, char *opt)
-{
-	char *p, *v, *ov;
-	static char *utf8 = "utf8";
-	int errors = 0, sloppy = 0;
-	kuid_t uid = INVALID_UID;
-	kgid_t gid = INVALID_GID;
-	umode_t fmask = (umode_t)-1, dmask = (umode_t)-1;
-	int mft_zone_multiplier = -1, on_errors = -1;
-	int show_sys_files = -1, case_sensitive = -1, disable_sparse = -1;
-	loff_t preallocated_size = -1;
-	struct nls_table *nls_map = NULL, *old_nls;
-
-	/* I am lazy... (-8 */
-#define NTFS_GETOPT_WITH_DEFAULT(option, variable, default_value)	\
-	if (!strcmp(p, option)) {					\
-		if (!v || !*v)						\
-			variable = default_value;			\
-		else {							\
-			variable = simple_strtoul(ov = v, &v, 0);	\
-			if (*v)						\
-				goto needs_val;				\
-		}							\
-	}
-#define NTFS_GETOPT(option, variable)					\
-	if (!strcmp(p, option)) {					\
-		if (!v || !*v)						\
-			goto needs_arg;					\
-		variable = simple_strtoul(ov = v, &v, 0);		\
-		if (*v)							\
-			goto needs_val;					\
-	}
-#define NTFS_GETOPT_UID(option, variable)				\
-	if (!strcmp(p, option)) {					\
-		uid_t uid_value;					\
-		if (!v || !*v)						\
-			goto needs_arg;					\
-		uid_value = simple_strtoul(ov = v, &v, 0);		\
-		if (*v)							\
-			goto needs_val;					\
-		variable = make_kuid(current_user_ns(), uid_value);	\
-		if (!uid_valid(variable))				\
-			goto needs_val;					\
-	}
-#define NTFS_GETOPT_GID(option, variable)				\
-	if (!strcmp(p, option)) {					\
-		gid_t gid_value;					\
-		if (!v || !*v)						\
-			goto needs_arg;					\
-		gid_value = simple_strtoul(ov = v, &v, 0);		\
-		if (*v)							\
-			goto needs_val;					\
-		variable = make_kgid(current_user_ns(), gid_value);	\
-		if (!gid_valid(variable))				\
-			goto needs_val;					\
-	}
-#define NTFS_GETOPT_OCTAL(option, variable)				\
-	if (!strcmp(p, option)) {					\
-		if (!v || !*v)						\
-			goto needs_arg;					\
-		variable = simple_strtoul(ov = v, &v, 8);		\
-		if (*v)							\
-			goto needs_val;					\
-	}
-#define NTFS_GETOPT_BOOL(option, variable)				\
-	if (!strcmp(p, option)) {					\
-		bool val;						\
-		if (!simple_getbool(v, &val))				\
-			goto needs_bool;				\
-		variable = val;						\
-	}
-#define NTFS_GETOPT_OPTIONS_ARRAY(option, variable, opt_array)		\
-	if (!strcmp(p, option)) {					\
-		int _i;							\
-		if (!v || !*v)						\
-			goto needs_arg;					\
-		ov = v;							\
-		if (variable == -1)					\
-			variable = 0;					\
-		for (_i = 0; opt_array[_i].str && *opt_array[_i].str; _i++) \
-			if (!strcmp(opt_array[_i].str, v)) {		\
-				variable |= opt_array[_i].val;		\
-				break;					\
-			}						\
-		if (!opt_array[_i].str || !*opt_array[_i].str)		\
-			goto needs_val;					\
-	}
-#define NTFS_GETOPT_S64(option, variable)				\
-	if (!strcmp(p, option)) {					\
-		if (!v || !*v)						\
-			goto needs_arg;					\
-		variable = simple_strtoll(ov = v, &v, 0);		\
-		if (*v)							\
-			goto needs_val;					\
-	}
-	if (!opt || !*opt)
-		goto no_mount_options;
-	ntfs_debug("Entering with mount options string: %s", opt);
-	while ((p = strsep(&opt, ","))) {
-		if ((v = strchr(p, '=')))
-			*v++ = 0;
-		NTFS_GETOPT_UID("uid", uid)
-		else NTFS_GETOPT_GID("gid", gid)
-		else NTFS_GETOPT_OCTAL("umask", fmask = dmask)
-		else NTFS_GETOPT_OCTAL("fmask", fmask)
-		else NTFS_GETOPT_OCTAL("dmask", dmask)
-		else NTFS_GETOPT("mft_zone_multiplier", mft_zone_multiplier)
-		else NTFS_GETOPT_WITH_DEFAULT("sloppy", sloppy, true)
-		else NTFS_GETOPT_BOOL("show_sys_files", show_sys_files)
-		else NTFS_GETOPT_BOOL("case_sensitive", case_sensitive)
-		else NTFS_GETOPT_BOOL("disable_sparse", disable_sparse)
-		else NTFS_GETOPT_S64("preallocated_size", preallocated_size)
-		else NTFS_GETOPT_OPTIONS_ARRAY("errors", on_errors,
-				on_errors_arr)
-		else if (!strcmp(p, "posix") || !strcmp(p, "show_inodes"))
-			ntfs_warning(vol->sb, "Ignoring obsolete option %s.",
-					p);
-		else if (!strcmp(p, "nls") || !strcmp(p, "iocharset")) {
-			if (!strcmp(p, "iocharset"))
-				ntfs_warning(vol->sb,
-					"Option iocharset is deprecated. Please use option nls=<charsetname> in the future.");
-			if (!v || !*v)
-				goto needs_arg;
-use_utf8:
-			old_nls = nls_map;
-			nls_map = load_nls(v);
-			if (!nls_map) {
-				if (!old_nls) {
-					ntfs_error(vol->sb, "NLS character set %s not found.", v);
-					return false;
-				}
-				ntfs_error(vol->sb, "NLS character set %s not found. Using previous one %s.",
-						v, old_nls->charset);
-				nls_map = old_nls;
-			} else /* nls_map */ {
-				unload_nls(old_nls);
-			}
-		} else if (!strcmp(p, "utf8")) {
-			bool val = false;
-
-			ntfs_warning(vol->sb,
-				"Option utf8 is no longer supported, using option nls=utf8. Please use option nls=utf8 in the future and make sure utf8 is compiled either as a module or into the kernel.");
-			if (!v || !*v)
-				val = true;
-			else if (!simple_getbool(v, &val))
-				goto needs_bool;
-			if (val) {
-				v = utf8;
-				goto use_utf8;
-			}
-		} else {
-			ntfs_error(vol->sb, "Unrecognized mount option %s.", p);
-			if (errors < INT_MAX)
-				errors++;
-		}
-#undef NTFS_GETOPT_OPTIONS_ARRAY
-#undef NTFS_GETOPT_BOOL
-#undef NTFS_GETOPT
-#undef NTFS_GETOPT_WITH_DEFAULT
-	}
-no_mount_options:
-	if (errors && !sloppy)
-		return false;
-	if (sloppy)
-		ntfs_warning(vol->sb,
-			"Sloppy option given. Ignoring unrecognized mount option(s) and continuing.");
-	/* Keep this first! */
-	if (on_errors != -1) {
-		if (!on_errors) {
-			ntfs_error(vol->sb,
-				"Invalid errors option argument or bug in options parser.");
-			return false;
-		}
-	}
-	if (nls_map) {
-		if (vol->nls_map && vol->nls_map != nls_map) {
-			ntfs_error(vol->sb, "Cannot change NLS character set on remount.");
-			return false;
-		} /* else (!vol->nls_map) */
-		ntfs_debug("Using NLS character set %s.", nls_map->charset);
-		vol->nls_map = nls_map;
-	} else /* (!nls_map) */ {
-		if (!vol->nls_map) {
-			vol->nls_map = load_nls_default();
-			if (!vol->nls_map) {
-				ntfs_error(vol->sb, "Failed to load default NLS character set.");
-				return false;
-			}
-			ntfs_debug("Using default NLS character set (%s).",
-					vol->nls_map->charset);
-		}
-	}
-	if (mft_zone_multiplier != -1) {
-		if (vol->mft_zone_multiplier && vol->mft_zone_multiplier !=
-				mft_zone_multiplier) {
-			ntfs_error(vol->sb, "Cannot change mft_zone_multiplier on remount.");
-			return false;
-		}
-		if (mft_zone_multiplier < 1 || mft_zone_multiplier > 4) {
-			ntfs_error(vol->sb,
-				"Invalid mft_zone_multiplier. Using default value, i.e. 1.");
-			mft_zone_multiplier = 1;
-		}
-		vol->mft_zone_multiplier = mft_zone_multiplier;
-	}
-
-	if (preallocated_size != -1)
-		vol->preallocated_size = preallocated_size;
-	else
-		vol->preallocated_size = NTFS_DEF_PREALLOC_SIZE;
-	if (!vol->mft_zone_multiplier)
-		vol->mft_zone_multiplier = 1;
-	if (on_errors != -1)
-		vol->on_errors = on_errors;
-	if (!vol->on_errors)
-		vol->on_errors |= ON_ERRORS_CONTINUE;
-	vol->uid = uid;
-	vol->gid = gid;
-	if (fmask != (umode_t)-1)
-		vol->fmask = fmask;
-	if (dmask != (umode_t)-1)
-		vol->dmask = dmask;
-	if (show_sys_files != -1) {
-		if (show_sys_files)
-			NVolSetShowSystemFiles(vol);
-		else
-			NVolClearShowSystemFiles(vol);
-	}
-	if (case_sensitive != -1) {
-		if (case_sensitive)
-			NVolSetCaseSensitive(vol);
-		else
-			NVolClearCaseSensitive(vol);
-	}
-	return true;
-needs_arg:
-	ntfs_error(vol->sb, "The %s option requires an argument.", p);
-	return false;
-needs_bool:
-	ntfs_error(vol->sb, "The %s option requires a boolean argument.", p);
-	return false;
-needs_val:
-	ntfs_error(vol->sb, "Invalid %s option argument: %s", p, ov);
-	return false;
-}
-#endif
 
 const struct option_t on_errors_arr[] = {
 	{ ON_ERRORS_PANIC,	"panic" },
@@ -687,91 +409,6 @@ int ntfs_clear_volume_flags(struct ntfs_volume *vol, __le16 flags)
 	flags = vol->vol_flags & cpu_to_le16(~le16_to_cpu(flags));
 	return ntfs_write_volume_flags(vol, flags);
 }
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)
-/**
- * ntfs_remount - change the mount options of a mounted ntfs filesystem
- * @sb:		superblock of mounted ntfs filesystem
- * @flags:	remount flags
- * @opt:	remount options string
- *
- * Change the mount options of an already mounted ntfs filesystem.
- *
- * NOTE:  The VFS sets the @sb->s_flags remount flags to @flags after
- * ntfs_remount() returns successfully (i.e. returns 0).  Otherwise,
- * @sb->s_flags are not changed.
- */
-static int ntfs_remount(struct super_block *sb, int *flags, char *opt)
-{
-	struct ntfs_volume *vol = NTFS_SB(sb);
-
-	ntfs_debug("Entering with remount options string: %s", opt);
-
-	sync_filesystem(sb);
-
-	/*
-	 * For the read-write compiled driver, if we are remounting read-write,
-	 * make sure there are no volume errors and that no unsupported volume
-	 * flags are set.  Also, empty the logfile journal as it would become
-	 * stale as soon as something is written to the volume and mark the
-	 * volume dirty so that chkdsk is run if the volume is not umounted
-	 * cleanly.  Finally, mark the quotas out of date so Windows rescans
-	 * the volume on boot and updates them.
-	 *
-	 * When remounting read-only, mark the volume clean if no volume errors
-	 * have occurred.
-	 */
-	if (sb_rdonly(sb) && !(*flags & SB_RDONLY)) {
-		static const char *es = ".  Cannot remount read-write.";
-
-		/* Remounting read-write. */
-		if (NVolErrors(vol)) {
-			ntfs_error(sb, "Volume has errors and is read-only%s",
-					es);
-			return -EROFS;
-		}
-		if (vol->vol_flags & VOLUME_IS_DIRTY) {
-			ntfs_error(sb, "Volume is dirty and read-only%s", es);
-			return -EROFS;
-		}
-		if (vol->vol_flags & VOLUME_MODIFIED_BY_CHKDSK) {
-			ntfs_error(sb, "Volume has been modified by chkdsk and is read-only%s", es);
-			return -EROFS;
-		}
-		if (vol->vol_flags & VOLUME_MUST_MOUNT_RO_MASK) {
-			ntfs_error(sb, "Volume has unsupported flags set (0x%x) and is read-only%s",
-					le16_to_cpu(vol->vol_flags), es);
-			return -EROFS;
-		}
-		if (vol->logfile_ino && !ntfs_empty_logfile(vol->logfile_ino)) {
-			ntfs_error(sb, "Failed to empty journal LogFile%s",
-					es);
-			NVolSetErrors(vol);
-			return -EROFS;
-		}
-		if (!ntfs_mark_quotas_out_of_date(vol)) {
-			ntfs_error(sb, "Failed to mark quotas out of date%s",
-					es);
-			NVolSetErrors(vol);
-			return -EROFS;
-		}
-	} else if (!sb_rdonly(sb) && (*flags & SB_RDONLY)) {
-		/* Remounting read-only. */
-		if (!NVolErrors(vol) && ntfs_clear_volume_flags(vol, VOLUME_IS_DIRTY))
-			ntfs_warning(sb,
-				"Failed to clear dirty bit in volume information flags.  Run chkdsk.");
-	}
-
-	if (!parse_options(vol, opt))
-		return -EINVAL;
-
-	if (vol->nls_map && !strcmp(vol->nls_map->charset, "utf8"))
-		vol->nls_utf8 = true;
-
-	ntfs_debug("Done.");
-	return 0;
-}
-#endif
 
 int ntfs_write_volume_label(struct ntfs_volume *vol, char *label)
 {
@@ -1315,20 +952,22 @@ static bool check_mft_mirror(struct ntfs_volume *vol)
 		/* Switch pages if necessary. */
 		if (!(i % mrecs_per_page)) {
 			if (index) {
-				ntfs_unmap_page(mft_page);
-				ntfs_unmap_page(mirr_page);
+				kunmap(mft_page);
+				put_page(mft_page);
+				kunmap(mirr_page);
+				put_page(mirr_page);
 			}
 			/* Get the $MFT page. */
-			mft_page = ntfs_map_page(vol->mft_ino->i_mapping,
-					index);
+			mft_page = read_mapping_page(vol->mft_ino->i_mapping,
+					index, NULL);
 			if (IS_ERR(mft_page)) {
 				ntfs_error(sb, "Failed to read $MFT.");
 				return false;
 			}
 			kmft = page_address(mft_page);
 			/* Get the $MFTMirr page. */
-			mirr_page = ntfs_map_page(vol->mftmirr_ino->i_mapping,
-					index);
+			mirr_page = read_mapping_page(vol->mftmirr_ino->i_mapping,
+					index, NULL);
 			if (IS_ERR(mirr_page)) {
 				ntfs_error(sb, "Failed to read $MFTMirr.");
 				goto mft_unmap_out;
@@ -1547,7 +1186,7 @@ static int check_windows_hibernation_status(struct ntfs_volume *vol)
 	}
 	start_addr = (u32 *)kmap_local_folio(folio, 0);
 #else
-	page = ntfs_map_page(vi->i_mapping, 0);
+	page = read_mapping_page(vi->i_mapping, 0, NULL);
 	if (IS_ERR(page)) {
 		ntfs_error(vol->sb, "Failed to read from hiberfil.sys.");
 		ret = PTR_ERR(page);
@@ -2315,7 +1954,7 @@ static void ntfs_put_super(struct super_block *sb)
 	ntfs_volume_free(vol);
 }
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 16, 0)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(6, 5, 0)
 int ntfs_force_shutdown(struct super_block *sb, u32 flags)
 {
 	struct ntfs_volume *vol = NTFS_SB(sb);
@@ -2778,14 +2417,11 @@ static const struct super_operations ntfs_sops = {
 	.drop_inode	= ntfs_drop_big_inode,
 	.write_inode	= ntfs_write_inode,	/* VFS: Write dirty inode to disk. */
 	.put_super	= ntfs_put_super,	/* Syscall: umount. */
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 16, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0)
 	.shutdown	= ntfs_shutdown,
 #endif
 	.sync_fs	= ntfs_sync_fs,		/* Syscall: sync. */
 	.statfs		= ntfs_statfs,		/* Syscall: statfs */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)
-	.remount_fs	= ntfs_remount,		/* Syscall: mount -o remount. */
-#endif
 	.evict_inode	= ntfs_evict_big_inode,
 	.show_options	= ntfs_show_options,	/* Show mount options in proc. */
 };
@@ -2816,24 +2452,16 @@ static void precalc_free_clusters(struct work_struct *work)
  */
 static struct lock_class_key ntfs_mft_inval_lock_key;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
 static int ntfs_fill_super(struct super_block *sb, struct fs_context *fc)
-#else
-static int ntfs_fill_super(struct super_block *sb, void *opt, const int silent)
-#endif
 {
 	char *boot;
 	struct inode *tmp_ino;
 	int blocksize, result;
 	pgoff_t lcn_bit_pages;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
 	struct ntfs_volume *vol = NTFS_SB(sb);
 	int silent = fc->sb_flags & SB_SILENT;
 
 	vol->sb = sb;
-#else
-	struct ntfs_volume *vol;
-#endif
 
 	/*
 	 * We do a pretty difficult piece of bootstrap by reading the
@@ -2847,31 +2475,6 @@ static int ntfs_fill_super(struct super_block *sb, void *opt, const int silent)
 	 */
 	lockdep_off();
 	ntfs_debug("Entering.");
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)
-	/* Allocate a new struct ntfs_volume and place it in sb->s_fs_info. */
-	sb->s_fs_info = kmalloc(sizeof(struct ntfs_volume), GFP_NOFS);
-	vol = NTFS_SB(sb);
-	if (!vol) {
-		if (!silent)
-			ntfs_error(sb,
-				"Allocation of NTFS volume structure failed. Aborting mount...");
-		lockdep_on();
-		return -ENOMEM;
-	}
-	/* Initialize struct ntfs_volume structure. */
-	*vol = (struct ntfs_volume) {
-		.sb = sb,
-		.fmask = 0,
-		.dmask = 0,
-	};
-	init_rwsem(&vol->mftbmp_lock);
-	init_rwsem(&vol->lcnbmp_lock);
-
-	/* Important to get the mount options dealt with now. */
-	if (!parse_options(vol, (char *)opt))
-		goto err_out_now;
-#endif
 
 	if (vol->nls_map && !strcmp(vol->nls_map->charset, "utf8"))
 		vol->nls_utf8 = true;
@@ -3187,7 +2790,6 @@ struct kmem_cache *ntfs_index_ctx_cache;
 /* Driver wide mutex. */
 DEFINE_MUTEX(ntfs_lock);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
 static int ntfs_get_tree(struct fs_context *fc)
 {
 	return get_tree_bdev(fc, ntfs_fill_super);
@@ -3247,21 +2849,6 @@ static struct file_system_type ntfs_fs_type = {
 	.kill_sb                = kill_block_super,
 	.fs_flags               = FS_REQUIRES_DEV | FS_ALLOW_IDMAP,
 };
-#else
-static struct dentry *ntfs_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data)
-{
-	return mount_bdev(fs_type, flags, dev_name, data, ntfs_fill_super);
-}
-
-static struct file_system_type ntfs_fs_type = {
-	.owner		= THIS_MODULE,
-	.name		= "ntfs",
-	.mount		= ntfs_mount,
-	.kill_sb	= kill_block_super,
-	.fs_flags	= FS_REQUIRES_DEV | FS_ALLOW_IDMAP,
-};
-#endif
 
 static int ntfs_workqueue_init(void)
 {

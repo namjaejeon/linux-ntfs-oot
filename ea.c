@@ -689,8 +689,7 @@ err_out:
 	return err;
 }
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 12, 0)
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 16, 0)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(6, 3, 0)
 static int ntfs_setxattr(const struct xattr_handler *handler,
 		struct mnt_idmap *idmap, struct dentry *unused,
 		struct inode *inode, const char *name, const void *value,
@@ -698,12 +697,6 @@ static int ntfs_setxattr(const struct xattr_handler *handler,
 #else
 static int ntfs_setxattr(const struct xattr_handler *handler,
 		struct user_namespace *mnt_userns, struct dentry *unused,
-		struct inode *inode, const char *name, const void *value,
-		size_t size, int flags)
-#endif
-#else
-static int ntfs_setxattr(const struct xattr_handler *handler,
-		struct dentry *unused,
 		struct inode *inode, const char *name, const void *value,
 		size_t size, int flags)
 #endif

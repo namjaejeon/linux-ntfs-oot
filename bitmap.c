@@ -163,8 +163,11 @@ int __ntfs_bitmap_set_bits_in_run(struct inode *vi, const s64 start_bit,
 				PTR_ERR(folio));
 		return PTR_ERR(folio);
 	}
+
+	folio_lock(folio);
+	kaddr = kmap_local_folio(folio, 0);
 #else
-	page = ntfs_map_page(mapping, index);
+	page = read_mapping_page(mapping, index, NULL);
 	if (IS_ERR(page)) {
 		if (!is_rollback)
 			ntfs_error(vi->i_sb,
@@ -176,9 +179,6 @@ int __ntfs_bitmap_set_bits_in_run(struct inode *vi, const s64 start_bit,
 	lock_page(page);
 	kaddr = page_address(page);
 #endif
-
-	folio_lock(folio);
-	kaddr = kmap_local_folio(folio, 0);
 
 	/* Set @pos to the position of the byte containing @start_bit. */
 	pos = (start_bit >> 3) & ~PAGE_MASK;
@@ -247,8 +247,9 @@ int __ntfs_bitmap_set_bits_in_run(struct inode *vi, const s64 start_bit,
 		flush_dcache_page(page);
 		set_page_dirty(page);
 		unlock_page(page);
-		ntfs_unmap_page(page);
-		page = ntfs_map_page(mapping, ++index);
+		kunmap(page);
+		put_page(page);
+		page = read_mapping_page(mapping, ++index, NULL);
 		if (IS_ERR(page)) {
 			ntfs_error(vi->i_sb,
 				   "Failed to map subsequent page (error %li), aborting.",
@@ -302,7 +303,8 @@ done:
 	flush_dcache_page(page);
 	set_page_dirty(page);
 	unlock_page(page);
-	ntfs_unmap_page(page);
+	kunmap(page);
+	put_page(page);
 #endif
 	ntfs_debug("Done.");
 	return 0;

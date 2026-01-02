@@ -18,8 +18,13 @@
 #include "debug.h"
 #include "iomap.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 static s64 ntfs_convert_folio_index_into_lcn(struct ntfs_volume *vol, struct ntfs_inode *ni,
 		unsigned long folio_index)
+#else
+static s64 ntfs_convert_page_index_into_lcn(struct ntfs_volume *vol, struct ntfs_inode *ni,
+		unsigned long folio_index)
+#endif
 {
 	s64 vcn;
 	s64 lcn;
@@ -129,6 +134,7 @@ static int ntfs_readpage(struct file *file, struct page *page)
 			BUG_ON(ni->name_len);
 			return ntfs_read_compressed_block(page);
 		}
+	}
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
@@ -141,7 +147,7 @@ static int ntfs_readpage(struct file *file, struct page *page)
 	return iomap_readpage(page, &ntfs_read_iomap_ops);
 #endif
 #endif
-	}
+}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 static int ntfs_write_mft_block(struct ntfs_inode *ni, struct folio *folio,
@@ -339,7 +345,6 @@ static int ntfs_write_mft_block(struct ntfs_inode *ni, struct page *page,
 	unsigned long mft_no;
 	struct ntfs_inode *tni;
 	s64 lcn;
-	unsigned int lcn_page_off = 0;
 	s64 vcn = (s64)page->index << PAGE_SHIFT >> vol->cluster_size_bits;
 	s64 end_vcn = ni->allocated_size >> vol->cluster_size_bits;
 	unsigned int page_sz;
@@ -368,11 +373,6 @@ static int ntfs_write_mft_block(struct ntfs_inode *ni, struct page *page,
 		return -EIO;
 	}
 
-	if (vol->cluster_size_bits > PAGE_SHIFT) {
-		lcn_page_off = page->index << PAGE_SHIFT;
-		lcn_page_off &= vol->cluster_size_mask;
-	}
-
 	/* Map the page so we can access its contents. */
 	kaddr = kmap(page);
 	/* Clear the page uptodate flag whilst the mst fixups are applied. */
@@ -384,12 +384,26 @@ static int ntfs_write_mft_block(struct ntfs_inode *ni, struct page *page,
 		/* Get the mft record number. */
 		mft_no = (((s64)page->index << PAGE_SHIFT) + mft_ofs) >>
 			vol->mft_record_size_bits;
+		vcn = mft_no << vol->mft_record_size_bits >> vol->cluster_size_bits;
 		/* Check whether to write this mft record. */
 		tni = NULL;
 		if (ntfs_may_write_mft_record(vol, mft_no,
 					(struct mft_record *)(kaddr + mft_ofs), &tni)) {
 			unsigned int mft_record_off = 0;
 			s64 vcn_off = vcn;
+
+			/*
+			 * Skip $MFT extent mft records and let them being written
+			 * by writeback to avioid deadlocks. the $MFT runlist
+			 * lock must be taken before $MFT extent mrec_lock is taken.
+			 */
+			if (tni && tni->nr_extents < 0 &&
+				tni->ext.base_ntfs_ino == NTFS_I(vol->mft_ino)) {
+				mutex_unlock(&tni->mrec_lock);
+				atomic_dec(&tni->count);
+				iput(vol->mft_ino);
+				continue;
+			}
 
 			/*
 			 * The record should be written.  If a locked ntfs
@@ -407,13 +421,21 @@ flush_bio:
 				bio = NULL;
 			}
 
-			if (vol->cluster_size == NTFS_BLOCK_SIZE) {
+			if (vol->cluster_size < PAGE_SIZE) {
 				down_write(&ni->runlist.lock);
 				rl = ntfs_attr_vcn_to_rl(ni, vcn_off, &lcn);
 				up_write(&ni->runlist.lock);
 				if (IS_ERR(rl) || lcn < 0) {
 					err = -EIO;
 					goto unm_done;
+				}
+				if (bio &&
+				   (bio_end_sector(bio) >> (vol->cluster_size_bits - 9)) !=
+				    lcn) {
+					flush_dcache_page(page);
+					submit_bio_wait(bio);
+					bio_put(bio);
+					bio = NULL;
 				}
 			}
 
@@ -436,7 +458,10 @@ flush_bio:
 					NTFS_B_TO_SECTOR(vol, NTFS_CLU_TO_B(vol, lcn) + off);
 			}
 
-			if (vol->cluster_size == NTFS_BLOCK_SIZE && rl->length == 1)
+			if (vol->cluster_size == NTFS_BLOCK_SIZE &&
+			    (mft_record_off ||
+			     rl->length - (vcn_off - rl->vcn) == 1 ||
+			     mft_ofs + NTFS_BLOCK_SIZE >= PAGE_SIZE))
 				page_sz = NTFS_BLOCK_SIZE;
 			else
 				page_sz = vol->mft_record_size;
@@ -446,20 +471,18 @@ flush_bio:
 				bio_put(bio);
 				goto unm_done;
 			}
-			prev_mft_ofs = mft_ofs;
 			mft_record_off += page_sz;
 
 			if (mft_record_off != vol->mft_record_size) {
 				vcn_off++;
 				goto flush_bio;
 			}
+			prev_mft_ofs = mft_ofs;
 
 			if (mft_no < vol->mftmirr_size)
 				ntfs_sync_mft_mirror(vol, mft_no,
 						(struct mft_record *)(kaddr + mft_ofs));
 		}
-
-		vcn += vol->mft_record_size >> vol->cluster_size_bits;
 	}
 
 	if (bio) {

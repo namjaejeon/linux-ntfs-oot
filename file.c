@@ -876,9 +876,7 @@ static ssize_t ntfs_file_splice_read(struct file *in, loff_t *ppos,
 
 	return filemap_splice_read(in, ppos, pipe, len, flags);
 }
-#endif
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 16, 0)
 static int ntfs_ioctl_shutdown(struct super_block *sb, unsigned long arg)
 {
 	u32 flags;
@@ -891,6 +889,7 @@ static int ntfs_ioctl_shutdown(struct super_block *sb, unsigned long arg)
 
 	return ntfs_force_shutdown(sb, flags);
 }
+#endif
 
 static int ntfs_ioctl_get_volume_label(struct file *filp, unsigned long arg)
 {
@@ -901,7 +900,7 @@ static int ntfs_ioctl_get_volume_label(struct file *filp, unsigned long arg)
 		if (copy_to_user(buf, "", 1))
 			return -EFAULT;
 	} else if (copy_to_user(buf, vol->volume_label,
-				MIN(FSLABEL_MAX, strlen(vol->volume_label) + 1)))
+				min_t(int, FSLABEL_MAX, strlen(vol->volume_label) + 1)))
 		return -EFAULT;
 	return 0;
 }
@@ -969,8 +968,10 @@ static int ntfs_ioctl_fitrim(struct ntfs_volume *vol, unsigned long arg)
 long ntfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	switch (cmd) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0)
 	case NTFS_IOC_SHUTDOWN:
 		return ntfs_ioctl_shutdown(file_inode(filp)->i_sb, arg);
+#endif
 	case FS_IOC_GETFSLABEL:
 		return ntfs_ioctl_get_volume_label(filp, arg);
 	case FS_IOC_SETFSLABEL:
@@ -988,7 +989,6 @@ long ntfs_compat_ioctl(struct file *filp, unsigned int cmd,
 {
 	return ntfs_ioctl(filp, cmd, (unsigned long)compat_ptr(arg));
 }
-#endif
 #endif
 
 static long ntfs_fallocate(struct file *file, int mode, loff_t offset, loff_t len)

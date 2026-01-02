@@ -1,5 +1,5 @@
 ## NTFS filesystem
-This is the ntfs filesystem for support from the linux 5.15 kernel
+This is the ntfs filesystem for support from the linux 6.1 kernel
 to the latest kernel.
 
 ## Installing as a stand-alone module

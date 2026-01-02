@@ -335,8 +335,8 @@ descend_into_child_node:
 	folio_unlock(folio);
 	folio_put(folio);
 #else
-	page = ntfs_map_page(ia_mapping, vcn <<
-			dir_ni->itype.index.vcn_size_bits >> PAGE_SHIFT);
+	page = read_mapping_page(ia_mapping, vcn <<
+			dir_ni->itype.index.vcn_size_bits >> PAGE_SHIFT, NULL);
 	if (IS_ERR(page)) {
 		ntfs_error(sb, "Failed to map directory index page, error %ld.",
 				-PTR_ERR(page));
@@ -352,7 +352,8 @@ descend_into_child_node:
 	memcpy(kaddr, (u8 *)page_address(page), PAGE_SIZE);
 	post_read_mst_fixup((struct ntfs_record *)kaddr, PAGE_SIZE);
 	unlock_page(page);
-	ntfs_unmap_page(page);
+	kunmap(page);
+	put_page(page);
 #endif
 fast_descend_into_child_node:
 	/* Get to the index allocation block. */

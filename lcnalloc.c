@@ -324,7 +324,8 @@ struct runlist_element *ntfs_cluster_alloc(struct ntfs_volume *vol, const s64 st
 				need_writeback = 0;
 			}
 			unlock_page(page);
-			ntfs_unmap_page(page);
+			kunmap(page);
+			put_page(page);
 			page = NULL;
 		}
 #endif
@@ -352,7 +353,7 @@ struct runlist_element *ntfs_cluster_alloc(struct ntfs_volume *vol, const s64 st
 		folio_lock(folio);
 		buf = kmap_local_folio(folio, 0) + pg_off;
 #else
-		page = ntfs_map_page(mapping, index);
+		page = read_mapping_page(mapping, index, NULL);
 		if (IS_ERR(page)) {
 			err = PTR_ERR(page);
 			ntfs_error(vol->sb, "Failed to map page.");
@@ -741,7 +742,8 @@ out:
 			need_writeback = 0;
 		}
 		unlock_page(page);
-		ntfs_unmap_page(page);
+		kunmap(page);
+		put_page(page);
 	}
 #endif
 	if (likely(!err)) {
