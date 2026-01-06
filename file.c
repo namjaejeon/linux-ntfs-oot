@@ -1226,6 +1226,7 @@ static long ntfs_fallocate(struct file *file, int mode, loff_t offset, loff_t le
 	if (!(mode & FALLOC_FL_KEEP_SIZE) && new_size != old_size)
 		i_size_write(vi, ni->data_size);
 
+	err = file_modified(file);
 out:
 	if (map_locked)
 		filemap_invalidate_unlock(vi->i_mapping);
