@@ -1185,6 +1185,9 @@ static int ntfs_dir_fsync(struct file *filp, loff_t start, loff_t end,
 		struct file_name_attr *fn = (struct file_name_attr *)((u8 *)ctx->attr +
 				le16_to_cpu(ctx->attr->data.resident.value_offset));
 
+		if (MREF_LE(fn->parent_directory) == ni->mft_no)
+			continue;
+
 		parent_vi = ntfs_iget(vi->i_sb, MREF_LE(fn->parent_directory));
 		if (IS_ERR(parent_vi))
 			continue;
