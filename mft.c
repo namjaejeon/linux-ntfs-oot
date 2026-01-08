@@ -342,6 +342,7 @@ struct mft_record *map_extent_mft_record(struct ntfs_inode *base_ni, u64 mref,
 	 * in which case just return it. If not found, add it to the base
 	 * inode before returning it.
 	 */
+retry:
 	mutex_lock(&base_ni->extent_lock);
 	if (base_ni->nr_extents > 0) {
 		extent_nis = base_ni->ext.extent_ntfs_inos;
@@ -379,10 +380,11 @@ map_err_out:
 				-PTR_ERR(m));
 		return m;
 	}
+	mutex_unlock(&base_ni->extent_lock);
+
 	/* Record wasn't there. Get a new ntfs inode and initialize it. */
 	ni = ntfs_new_extent_inode(base_ni->vol->sb, mft_no);
 	if (unlikely(!ni)) {
-		mutex_unlock(&base_ni->extent_lock);
 		atomic_dec(&base_ni->count);
 		return ERR_PTR(-ENOMEM);
 	}
@@ -393,7 +395,6 @@ map_err_out:
 	/* Now map the record. */
 	m = map_mft_record(ni);
 	if (IS_ERR(m)) {
-		mutex_unlock(&base_ni->extent_lock);
 		atomic_dec(&base_ni->count);
 		ntfs_clear_extent_inode(ni);
 		goto map_err_out;
@@ -404,7 +405,16 @@ map_err_out:
 				"Found stale extent mft reference! Corrupt filesystem. Run chkdsk.");
 		destroy_ni = true;
 		m = ERR_PTR(-EIO);
-		goto unm_err_out;
+		goto unm_nolock_err_out;
+	}
+
+	mutex_lock(&base_ni->extent_lock);
+	for (i = 0; i < base_ni->nr_extents; i++) {
+		if (mft_no == extent_nis[i]->mft_no) {
+			mutex_unlock(&base_ni->extent_lock);
+			ntfs_clear_extent_inode(ni);
+			goto retry;
+		}
 	}
 	/* Attach extent inode to base inode, reallocating memory if needed. */
 	if (!(base_ni->nr_extents & 3)) {
@@ -433,8 +443,9 @@ map_err_out:
 	*ntfs_ino = ni;
 	return m;
 unm_err_out:
-	unmap_mft_record(ni);
 	mutex_unlock(&base_ni->extent_lock);
+unm_nolock_err_out:
+	unmap_mft_record(ni);
 	atomic_dec(&base_ni->count);
 	/*
 	 * If the extent inode was not attached to the base inode we need to
